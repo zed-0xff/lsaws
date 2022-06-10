@@ -1,0 +1,162 @@
+#!/usr/bin/env ruby
+require 'aws-sdk-ec2'
+require 'terminal-table'
+require 'optparse'
+
+class Lsaws
+  SUPPORTED_FORMATS = %w'table yaml json json-row text'.sort
+  DEFAULT_FORMAT    = :table
+
+  def initialize argv
+    @options = {
+      format: DEFAULT_FORMAT,
+    }
+    @commands = option_parser.parse!(argv)
+  end
+
+  def option_parser
+    @option_parser ||=
+      OptionParser.new do |opt|
+        opt.on('-f', '--format FMT', SUPPORTED_FORMATS, "Format: #{SUPPORTED_FORMATS.join('/')}") do |f|
+          @options[:format] = f.to_sym
+        end
+        opt.on('--tags', 'Show tags') { @options[:show_tags] = true }
+        opt.on('-v', '--verbose', 'Verbose output') { @options[:verbose] = true }
+      end
+  end
+
+  ENTITIES = {
+    ami: {
+      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_images(params.merge(owners: ['self'])) },
+      rows: [
+        :image_id,
+        :name_tag,
+        :creation_date,
+      ]
+    },
+    ec2: {
+      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_instances(params) }
+      default_filter: { name: 'instance-state-name', values: ['pending', 'running', 'shutting-down', 'stopping'] },
+      rows: [
+        :instance_id,
+        :name_tag,
+        :vpc_id,
+        :private_ip_address,
+        :image_id,
+      ]
+    }
+  }
+
+  def list_amis
+    p FOO
+    client = Aws::EC2::Client.new
+    result = client.describe_images(
+      owners: ['self'],
+    )
+    convert_tags = _convert_tags_proc
+    hdr = %w'image_id name creation_date'
+    hdr << "tags" if @options[:show_tags]
+    rows = [hdr]
+    rows += result.images.map do |image|
+      pp image if @options[:verbose]
+      row = [
+        image.image_id,
+        #      image.name,
+        image.tags.find { |tag| tag.key == "Name" }&.value,
+        #      image.description,
+        image.creation_date,
+      ]
+      row << convert_tags.call(image.tags) if @options[:show_tags]
+      row
+    end
+  end
+
+  def list_instances
+    client = Aws::EC2::Client.new
+    result = client.describe_instances(
+      filters: [{ name: 'instance-state-name', values: ['pending', 'running', 'shutting-down', 'stopping'] }]
+    )
+    convert_tags = _convert_tags_proc
+    hdr = %w'instance_id name vpc_id ip image_id'
+    hdr << "tags" if @options[:show_tags]
+    rows = [hdr]
+    result.reservations.each do |r|
+      r.instances.each do |instance|
+        pp instance if @options[:verbose]
+        row = [
+          instance.instance_id,
+          instance.tags.find { |tag| tag.key == "Name" }&.value,
+          instance.vpc_id,
+          instance.private_ip_address,
+          instance.image_id,
+        ]
+        row << convert_tags.call(instance.tags) if @options[:show_tags]
+        rows << row
+      end
+    end
+    rows
+  end
+
+  def _convert_tags_proc
+    case @options[:format]
+    when :table, :text
+      Proc.new{ |tags| tags.map{ |tag| "#{tag.key}=#{tag.value}" }.join(", ") }
+    else
+      Proc.new{ |tags| Hash[*tags.map{ |tag| [tag.key, tag.value] }.flatten] }
+    end
+  end
+
+  def process_command cmd
+    rows = 
+      case cmd
+      when 'ec2'
+        list_instances
+      when 'ami'
+        list_amis
+      else
+        STDERR.puts "[!] unknown command: #{cmd.inspect}"
+        exit 1
+      end
+
+    hdr = rows.shift
+
+    case @options[:format]
+    when :text, :table
+      table = Terminal::Table.new rows: rows, headings: hdr
+      if @options[:format] == :text
+        table.style = { border_x: '', border_y: '', border_i: '', border_top: false, border_bottom: false }
+      else
+        table.style = { border: :unicode_round }
+      end
+      puts table
+    when :json
+      require 'json' unless defined?(JSON)
+      puts rows.to_json
+    when :'json-row'
+      require 'json' unless defined?(JSON)
+      rows.each do |row|
+        puts Hash[hdr.zip(row)].to_json
+      end
+    when :yaml
+      require 'yaml' unless defined?(YAML)
+      puts rows.to_yaml
+    else
+      STDERR.puts "[!] unknown format: #{@options[:format]}"
+      exit 1
+    end
+  end
+
+  def run!
+    if @commands.empty?
+      puts option_parser.help
+      return
+    end
+    @commands.each do |cmd|
+      process_command cmd
+    end
+  end
+end
+
+if __FILE__ == $0
+  Lsaws.new(ARGV).run!
+end

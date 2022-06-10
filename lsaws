@@ -4,12 +4,13 @@ require 'terminal-table'
 require 'optparse'
 
 class Lsaws
-  SUPPORTED_FORMATS = %w'table yaml json json-row text'.sort
+  SUPPORTED_FORMATS = %w'table yaml json json-stream text'.sort
   DEFAULT_FORMAT    = :table
 
   def initialize argv
     @options = {
       format: DEFAULT_FORMAT,
+      header: true,
     }
     @commands = option_parser.parse!(argv)
   end
@@ -22,106 +23,91 @@ class Lsaws
         end
         opt.on('--tags', 'Show tags') { @options[:show_tags] = true }
         opt.on('-v', '--verbose', 'Verbose output') { @options[:verbose] = true }
+        opt.on('--no-header', 'Suppress header') { @options[:header] = false }
       end
   end
 
-  ENTITIES = {
+  SUPPORTED_ENTITIES = {
     ami: {
       query:  Proc.new{ |params| Aws::EC2::Client.new.describe_images(params.merge(owners: ['self'])) },
       rows: [
         :image_id,
-        :name_tag,
+        {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
         :creation_date,
-      ]
+      ],
+      result_keys: [:images],
     },
     ec2: {
-      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_instances(params) }
+      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_instances(params) },
       default_filter: { name: 'instance-state-name', values: ['pending', 'running', 'shutting-down', 'stopping'] },
       rows: [
         :instance_id,
-        :name_tag,
+        {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
         :vpc_id,
         :private_ip_address,
         :image_id,
-      ]
+      ],
+      result_keys: [:reservations, :instances],
     }
   }
 
-  def list_amis
-    p FOO
-    client = Aws::EC2::Client.new
-    result = client.describe_images(
-      owners: ['self'],
-    )
-    convert_tags = _convert_tags_proc
-    hdr = %w'image_id name creation_date'
-    hdr << "tags" if @options[:show_tags]
-    rows = [hdr]
-    rows += result.images.map do |image|
-      pp image if @options[:verbose]
-      row = [
-        image.image_id,
-        #      image.name,
-        image.tags.find { |tag| tag.key == "Name" }&.value,
-        #      image.description,
-        image.creation_date,
-      ]
-      row << convert_tags.call(image.tags) if @options[:show_tags]
-      row
+  def _prepare_entities(type)
+    edef = SUPPORTED_ENTITIES[type]
+    raise "unknown entity type: #{type}" unless edef
+    params = {}
+    params[:filters] = [edef[:default_filter]] if edef[:default_filter]
+    result = edef[:query].call(params)
+    edef[:result_keys].each do |key|
+      if result.is_a?(Array)
+        result = result.map(&key).flatten
+      else
+        result = result.send(key)
+      end
+    end
+    rows_def = {}
+    edef[:rows].each do |r|
+      case r
+      when Symbol
+        rows_def[r] = Proc.new{ |entity| entity.send(r) }
+      when Hash
+        rows_def.merge!(r)
+      end
+    end
+    rows_def[:tags] = _convert_tags_proc if @options[:show_tags]
+    result.map do |entity|
+      yield entity, rows_def
     end
   end
 
-  def list_instances
-    client = Aws::EC2::Client.new
-    result = client.describe_instances(
-      filters: [{ name: 'instance-state-name', values: ['pending', 'running', 'shutting-down', 'stopping'] }]
-    )
-    convert_tags = _convert_tags_proc
-    hdr = %w'instance_id name vpc_id ip image_id'
-    hdr << "tags" if @options[:show_tags]
-    rows = [hdr]
-    result.reservations.each do |r|
-      r.instances.each do |instance|
-        pp instance if @options[:verbose]
-        row = [
-          instance.instance_id,
-          instance.tags.find { |tag| tag.key == "Name" }&.value,
-          instance.vpc_id,
-          instance.private_ip_address,
-          instance.image_id,
-        ]
-        row << convert_tags.call(instance.tags) if @options[:show_tags]
-        rows << row
-      end
+  def entities2hashes type
+    _prepare_entities(type) do |entity, rows_def|
+      Hash[rows_def.keys.map(&:to_s).zip rows_def.values.map{ |p| p.call(entity) }]
     end
-    rows
+  end
+
+  def entities2arrays type
+    hdr = nil
+    rows = _prepare_entities(type) do |entity, rows_def|
+      hdr ||= rows_def.keys.map(&:to_s)
+      rows_def.values.map{ |p| p.call(entity) }
+    end
+    [hdr] + rows
   end
 
   def _convert_tags_proc
     case @options[:format]
     when :table, :text
-      Proc.new{ |tags| tags.map{ |tag| "#{tag.key}=#{tag.value}" }.join(", ") }
+      Proc.new{ |entity| entity.tags.map{ |tag| "#{tag.key}=#{tag.value}" }.join(", ") }
     else
-      Proc.new{ |tags| Hash[*tags.map{ |tag| [tag.key, tag.value] }.flatten] }
+      Proc.new{ |entity| Hash[*entity.tags.map{ |tag| [tag.key, tag.value] }.flatten] }
     end
   end
 
   def process_command cmd
-    rows = 
-      case cmd
-      when 'ec2'
-        list_instances
-      when 'ami'
-        list_amis
-      else
-        STDERR.puts "[!] unknown command: #{cmd.inspect}"
-        exit 1
-      end
-
-    hdr = rows.shift
-
     case @options[:format]
     when :text, :table
+      rows = entities2arrays(cmd)
+      hdr = rows.shift
       table = Terminal::Table.new rows: rows, headings: hdr
       if @options[:format] == :text
         table.style = { border_x: '', border_y: '', border_i: '', border_top: false, border_bottom: false }
@@ -131,14 +117,17 @@ class Lsaws
       puts table
     when :json
       require 'json' unless defined?(JSON)
+      rows = entities2hashes(cmd)
       puts rows.to_json
-    when :'json-row'
+    when :'json-stream'
       require 'json' unless defined?(JSON)
+      rows = entities2hashes(cmd)
       rows.each do |row|
-        puts Hash[hdr.zip(row)].to_json
+        puts row.to_json
       end
     when :yaml
       require 'yaml' unless defined?(YAML)
+      rows = entities2hashes(cmd)
       puts rows.to_yaml
     else
       STDERR.puts "[!] unknown format: #{@options[:format]}"
@@ -152,7 +141,7 @@ class Lsaws
       return
     end
     @commands.each do |cmd|
-      process_command cmd
+      process_command cmd.to_sym
     end
   end
 end

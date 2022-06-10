@@ -11,6 +11,8 @@ class Lsaws
     @options = {
       format: DEFAULT_FORMAT,
       header: true,
+      filters: {},
+      only_cols: [],
     }
     @commands = option_parser.parse!(argv)
   end
@@ -18,19 +20,21 @@ class Lsaws
   def option_parser
     @option_parser ||=
       OptionParser.new do |opt|
-        opt.on('-f', '--format FMT', SUPPORTED_FORMATS, "Format: #{SUPPORTED_FORMATS.join('/')}") do |f|
+        opt.on('-o', '--output FMT', SUPPORTED_FORMATS, "Format: #{SUPPORTED_FORMATS.join('/')}") do |f|
           @options[:format] = f.to_sym
         end
         opt.on('--tags', 'Show tags') { @options[:show_tags] = true }
         opt.on('-v', '--verbose', 'Verbose output') { @options[:verbose] = true }
         opt.on('--no-header', 'Suppress header') { @options[:header] = false }
+        opt.on('-f', '--filter K=V', 'Add filter') { |o| @options[:filters].merge!(Hash[*o.split("=",2)]) }
+        opt.on('--only C', 'Show only specified column(s)') { |o| @options[:only_cols] << o }
       end
   end
 
   SUPPORTED_ENTITIES = {
     ami: {
       query:  Proc.new{ |params| Aws::EC2::Client.new.describe_images(params.merge(owners: ['self'])) },
-      rows: [
+      cols: [
         :image_id,
         {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
         :creation_date,
@@ -40,7 +44,7 @@ class Lsaws
     ec2: {
       query:  Proc.new{ |params| Aws::EC2::Client.new.describe_instances(params) },
       default_filter: { name: 'instance-state-name', values: ['pending', 'running', 'shutting-down', 'stopping'] },
-      rows: [
+      cols: [
         :instance_id,
         {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
         :vpc_id,
@@ -55,7 +59,11 @@ class Lsaws
     edef = SUPPORTED_ENTITIES[type]
     raise "unknown entity type: #{type}" unless edef
     params = {}
-    params[:filters] = [edef[:default_filter]] if edef[:default_filter]
+    if @options[:filters].any?
+      params[:filters] = @options[:filters].map{ |k,v| {name: k, values: [v]} }
+    else
+      params[:filters] = [edef[:default_filter]] if edef[:default_filter]
+    end
     result = edef[:query].call(params)
     edef[:result_keys].each do |key|
       if result.is_a?(Array)
@@ -64,34 +72,41 @@ class Lsaws
         result = result.send(key)
       end
     end
-    rows_def = {}
-    edef[:rows].each do |r|
+    col_defs = {}
+    edef[:cols].each do |r|
       case r
       when Symbol
-        rows_def[r] = Proc.new{ |entity| entity.send(r) }
+        col_defs[r] = Proc.new{ |entity| entity.send(r) }
       when Hash
-        rows_def.merge!(r)
+        col_defs.merge!(r)
       end
     end
-    rows_def[:tags] = _convert_tags_proc if @options[:show_tags]
+    col_defs[:tags] = _convert_tags_proc if @options[:show_tags]
+    if @options[:only_cols].any?
+      col_defs.delete_if{ |k,v| !@options[:only_cols].include?(k.to_s) }
+    end
     result.map do |entity|
-      yield entity, rows_def
+      yield entity, col_defs
     end
   end
 
   def entities2hashes type
-    _prepare_entities(type) do |entity, rows_def|
-      Hash[rows_def.keys.map(&:to_s).zip rows_def.values.map{ |p| p.call(entity) }]
+    _prepare_entities(type) do |entity, col_defs|
+      Hash[col_defs.keys.map(&:to_s).zip col_defs.values.map{ |p| p.call(entity) }]
     end
   end
 
   def entities2arrays type
     hdr = nil
-    rows = _prepare_entities(type) do |entity, rows_def|
-      hdr ||= rows_def.keys.map(&:to_s)
-      rows_def.values.map{ |p| p.call(entity) }
+    rows = _prepare_entities(type) do |entity, col_defs|
+      hdr ||= col_defs.keys.map(&:to_s)
+      col_defs.values.map{ |p| p.call(entity) }
     end
-    [hdr] + rows
+    if rows.any?
+      [hdr] + rows
+    else
+      []
+    end
   end
 
   def _convert_tags_proc
@@ -107,8 +122,14 @@ class Lsaws
     case @options[:format]
     when :text, :table
       rows = entities2arrays(cmd)
+      return unless rows.any?
       hdr = rows.shift
-      table = Terminal::Table.new rows: rows, headings: hdr
+      table = 
+        if @options[:header]
+          Terminal::Table.new rows: rows, headings: hdr
+        else
+          Terminal::Table.new rows: rows
+        end
       if @options[:format] == :text
         table.style = { border_x: '', border_y: '', border_i: '', border_top: false, border_bottom: false }
       else

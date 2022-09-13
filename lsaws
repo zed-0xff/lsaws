@@ -1,5 +1,4 @@
 #!/usr/bin/env ruby
-require 'aws-sdk-ec2'
 require 'terminal-table'
 require 'optparse'
 
@@ -33,31 +32,53 @@ class Lsaws
 
   SUPPORTED_ENTITIES = {
     ami: {
+      require: %w'aws-sdk-ec2',
       query:  Proc.new{ |params| Aws::EC2::Client.new.describe_images(params.merge(owners: ['self'])) },
+      result_keys: [:images],
       cols: [
         :image_id,
         {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
         :creation_date,
       ],
-      result_keys: [:images],
     },
     ec2: {
+      require: %w'aws-sdk-ec2',
       query:  Proc.new{ |params| Aws::EC2::Client.new.describe_instances(params) },
       default_filter: { name: 'instance-state-name', values: ['pending', 'running', 'shutting-down', 'stopping'] },
+      result_keys: [:reservations, :instances],
       cols: [
         :instance_id,
         {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
         :vpc_id,
         :private_ip_address,
-        :image_id,
+        :launch_time,
       ],
-      result_keys: [:reservations, :instances],
-    }
+    },
+    kms_keys: {
+      require: %w'aws-sdk-kms',
+      query:  Proc.new{ |params| Aws::KMS::Client.new.list_keys(params) },
+      result_keys: [:keys],
+      cols: [
+        :key_id,
+      ]
+    },
+    kms_aliases: {
+      require: %w'aws-sdk-kms',
+      query:  Proc.new{ |params| Aws::KMS::Client.new.list_aliases(params) },
+      result_keys: [:aliases],
+      cols: [
+        :alias_name,
+        :target_key_id,
+        :last_updated_date,
+      ]
+    },
   }
 
   def _prepare_entities(type)
     edef = SUPPORTED_ENTITIES[type]
     raise "unknown entity type: #{type}" unless edef
+    edef[:require].each { |r| require r }
+
     params = {}
     if @options[:filters].any?
       params[:filters] = @options[:filters].map{ |k,v| {name: k, values: [v]} }
@@ -65,6 +86,10 @@ class Lsaws
       params[:filters] = [edef[:default_filter]] if edef[:default_filter]
     end
     result = edef[:query].call(params)
+    unless edef[:result_keys]
+      STDERR.puts result.inspect
+      raise ":result_keys is not set"
+    end
     edef[:result_keys].each do |key|
       if result.is_a?(Array)
         result = result.map(&key).flatten

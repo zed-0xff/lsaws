@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require 'terminal-table'
 require 'optparse'
+require 'yaml'
 
 class Lsaws
   SUPPORTED_FORMATS = %w'table yaml json json-stream text'.sort
@@ -19,7 +20,7 @@ class Lsaws
   def option_parser
     @option_parser ||=
       OptionParser.new do |opt|
-        opt.banner = "Usage: lsaws [options] <entity>"
+        opt.banner = "Usage: lsaws [options] <sdk> [entity]"
 
         opt.on('-o', '--output FMT', SUPPORTED_FORMATS, "Format: #{SUPPORTED_FORMATS.join('/')}") do |f|
           @options[:format] = f.to_sym
@@ -30,115 +31,80 @@ class Lsaws
         opt.on('-f', '--filter K=V', 'Add filter') { |o| @options[:filters].merge!(Hash[*o.split("=",2)]) }
         opt.on('--only C', 'Show only specified column(s)') { |o| @options[:only_cols] << o }
 
-        opt.separator "\nSupported entities: " + SUPPORTED_ENTITIES.keys.join(", ")
+        opt.separator "\nSupported SDKs & entities:"
+        SUPPORTED_ENTITIES.each do |sdk, entities|
+          opt.separator "  #{sdk}\n    #{(entities.keys - ['default']).sort.join(", ")}"
+        end
       end
   end
 
-  SUPPORTED_ENTITIES = {
-    ami: {
-      require: %w'aws-sdk-ec2',
-      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_images(params.merge(owners: ['self'])) },
-      result_keys: [:images],
-      cols: [
-        :image_id,
-        {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
-        :creation_date,
-      ],
-    },
-    ec2: {
-      require: %w'aws-sdk-ec2',
-      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_instances(params) },
-      default_filter: { name: 'instance-state-name', values: ['pending', 'running', 'shutting-down', 'stopping'] },
-      result_keys: [:reservations, :instances],
-      cols: [
-        :instance_id,
-        {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
-        :vpc_id,
-        :private_ip_address,
-        :launch_time,
-      ],
-    },
-    eip: {
-      require: %w'aws-sdk-ec2',
-      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_addresses(params) },
-      result_keys: [:addresses],
-      cols: [
-        :public_ip,
-        :private_ip_address,
-        :instance_id,
-        {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
-      ],
-    },
-    kms_keys: {
-      require: %w'aws-sdk-kms',
-      query:  Proc.new{ |params| Aws::KMS::Client.new.list_keys(params) },
-      result_keys: [:keys],
-      cols: [
-        :key_id,
-      ]
-    },
-    kms_aliases: {
-      require: %w'aws-sdk-kms',
-      query:  Proc.new{ |params| Aws::KMS::Client.new.list_aliases(params) },
-      result_keys: [:aliases],
-      cols: [
-        :alias_name,
-        :target_key_id,
-        :last_updated_date,
-      ]
-    },
-  }
+  SUPPORTED_ENTITIES = YAML::load_file(File.expand_path(__FILE__) + ".yml")
 
-  def _prepare_entities(type)
-    edef = SUPPORTED_ENTITIES[type]
+  def _prepare_entities(sdk, type)
+    edef = SUPPORTED_ENTITIES[sdk][type]
+    if edef.is_a?(String)
+      type = edef
+      edef = SUPPORTED_ENTITIES[sdk][type]
+    end
     raise "unknown entity type: #{type}" unless edef
-    edef[:require].each { |r| require r }
+    require(edef['require'] || "aws-sdk-#{sdk}")
 
-    params = {}
+    method_name = edef['method'] || "describe_#{type}"
+    params = edef['default_params'] || {}
     if @options[:filters].any?
       params[:filters] = @options[:filters].map{ |k,v| {name: k, values: [v]} }
     else
-      params[:filters] = [edef[:default_filter]] if edef[:default_filter]
+      params[:filters] = [edef["default_filter"]] if edef["default_filter"]
     end
-    result = edef[:query].call(params)
-    unless edef[:result_keys]
-      STDERR.puts result.inspect
-      raise ":result_keys is not set"
-    end
-    edef[:result_keys].each do |key|
-      if result.is_a?(Array)
-        result = result.map(&key).flatten
+
+    client_class = edef['client_class'] || "Aws::#{sdk.upcase}::Client"
+    client = Kernel.const_get(client_class).new
+    results = client.send(method_name, params)
+
+    edef["result_keys"] ||= [type]
+    edef["result_keys"].each do |key|
+      if results.is_a?(Array)
+        results = results.map(&key.to_sym).flatten
       else
-        result = result.send(key)
+        results = results.send(key)
       end
     end
     col_defs = {}
-    edef[:cols].each do |r|
+    edef["cols"].each do |r|
       case r
-      when Symbol
+      when String
         col_defs[r] = Proc.new{ |entity| entity.send(r) }
       when Hash
         col_defs.merge!(r)
+      else
+        raise "unexpected #{r.inspect}"
       end
     end
-    col_defs[:tags] = _convert_tags_proc if @options[:show_tags]
+    col_defs["tags"] = _convert_tags_proc if @options[:show_tags]
     if @options[:only_cols].any?
       col_defs.delete_if{ |k,v| !@options[:only_cols].include?(k.to_s) }
     end
-    result.map do |entity|
+    if results.any? && !results.first.respond_to?(:name)
+      results.first.class.class_eval do
+        def name
+          tags.find { |tag| tag.key == "Name" }&.value
+        end
+      end
+    end
+    results.map do |entity|
       yield entity, col_defs
     end
   end
 
-  def entities2hashes type
-    _prepare_entities(type) do |entity, col_defs|
+  def entities2hashes sdk, type
+    _prepare_entities(sdk, type) do |entity, col_defs|
       Hash[col_defs.keys.map(&:to_s).zip col_defs.values.map{ |p| p.call(entity) }]
     end
   end
 
-  def entities2arrays type
+  def entities2arrays sdk, type
     hdr = nil
-    rows = _prepare_entities(type) do |entity, col_defs|
+    rows = _prepare_entities(sdk, type) do |entity, col_defs|
       hdr ||= col_defs.keys.map(&:to_s)
       col_defs.values.map{ |p| p.call(entity) }
     end
@@ -158,10 +124,10 @@ class Lsaws
     end
   end
 
-  def process_command cmd
+  def process_command sdk, type = 'default'
     case @options[:format]
     when :text, :table
-      rows = entities2arrays(cmd)
+      rows = entities2arrays(sdk, type)
       return unless rows.any?
       hdr = rows.shift
       table = 
@@ -187,7 +153,6 @@ class Lsaws
         puts row.to_json
       end
     when :yaml
-      require 'yaml' unless defined?(YAML)
       rows = entities2hashes(cmd)
       puts rows.to_yaml
     else
@@ -197,12 +162,12 @@ class Lsaws
   end
 
   def run!
-    if @commands.empty?
+    case @commands.size
+    when 1, 2
+      process_command *@commands
+    else
       puts option_parser.help
       return
-    end
-    @commands.each do |cmd|
-      process_command cmd.to_sym
     end
   end
 end

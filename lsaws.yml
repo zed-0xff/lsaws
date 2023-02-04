@@ -1,0 +1,43 @@
+ec2:
+  default: instances
+  images:
+    default_params:
+      owners: [ self ]
+    cols:
+    - image_id
+    - name
+    - creation_date
+  instances:
+    default_filter:
+      name: instance-state-name
+      values:
+      - pending
+      - running
+      - shutting-down
+      - stopping
+    result_keys:
+    - reservations
+    - instances
+    cols:
+    - instance_id
+    - name
+    - vpc_id
+    - private_ip_address
+    - launch_time
+  addresses:
+    cols:
+    - public_ip
+    - private_ip_address
+    - instance_id
+    - name
+kms:
+  keys:
+    method: list_keys
+    cols:
+    - key_id
+  aliases:
+    method: list_aliases
+    cols:
+    - alias_name
+    - target_key_id
+    - last_updated_date

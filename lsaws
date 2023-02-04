@@ -19,6 +19,8 @@ class Lsaws
   def option_parser
     @option_parser ||=
       OptionParser.new do |opt|
+        opt.banner = "Usage: lsaws [options] <entity>"
+
         opt.on('-o', '--output FMT', SUPPORTED_FORMATS, "Format: #{SUPPORTED_FORMATS.join('/')}") do |f|
           @options[:format] = f.to_sym
         end
@@ -27,6 +29,8 @@ class Lsaws
         opt.on('--no-header', 'Suppress header') { @options[:header] = false }
         opt.on('-f', '--filter K=V', 'Add filter') { |o| @options[:filters].merge!(Hash[*o.split("=",2)]) }
         opt.on('--only C', 'Show only specified column(s)') { |o| @options[:only_cols] << o }
+
+        opt.separator "\nSupported entities: " + SUPPORTED_ENTITIES.keys.join(", ")
       end
   end
 
@@ -52,6 +56,17 @@ class Lsaws
         :vpc_id,
         :private_ip_address,
         :launch_time,
+      ],
+    },
+    eip: {
+      require: %w'aws-sdk-ec2',
+      query:  Proc.new{ |params| Aws::EC2::Client.new.describe_addresses(params) },
+      result_keys: [:addresses],
+      cols: [
+        :public_ip,
+        :private_ip_address,
+        :instance_id,
+        {name: Proc.new{ |entity| entity.tags.find { |tag| tag.key == "Name" }&.value }},
       ],
     },
     kms_keys: {

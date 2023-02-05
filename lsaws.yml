@@ -7,6 +7,9 @@ ec2:
     - image_id
     - name
     - creation_date
+  fpga_images:
+    default_params:
+      owners: [ self ]
   instances:
     default_filter:
       name: instance-state-name

@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require 'terminal-table'
 require 'optparse'
+require 'json'
 require 'yaml'
 
 class Lsaws
@@ -13,14 +14,20 @@ class Lsaws
       header: true,
       filters: {},
       only_cols: [],
+      max_results: nil,
     }
     @commands = option_parser.parse!(argv)
+    if @options[:all]
+      raise "Unsupported arguments combination" if @commands.size != 1
+      @commands << :all
+    end
+    @commands << :list if @options[:list]
   end
 
   def option_parser
     @option_parser ||=
       OptionParser.new do |opt|
-        opt.banner = "Usage: lsaws [options] <sdk> [entity]"
+        opt.banner = "Usage: lsaws [options] <sdk> [entity_type]"
 
         opt.on('-o', '--output FMT', SUPPORTED_FORMATS, "Format: #{SUPPORTED_FORMATS.join('/')}") do |f|
           @options[:format] = f.to_sym
@@ -30,38 +37,60 @@ class Lsaws
         opt.on('--no-header', 'Suppress header') { @options[:header] = false }
         opt.on('-f', '--filter K=V', 'Add filter') { |o| @options[:filters].merge!(Hash[*o.split("=",2)]) }
         opt.on('--only C', 'Show only specified column(s)') { |o| @options[:only_cols] << o }
+        opt.on('--max-results N', Integer, 'Fetch only specified number of results') { |o| @options[:max_results] = o }
 
-        opt.separator "\nSupported SDKs & entities:"
-        SUPPORTED_ENTITIES.each do |sdk, entities|
-          opt.separator "  #{sdk}\n    #{(entities.keys - ['default']).sort.join(", ")}"
-        end
+        opt.separator ""
+        opt.on('-L', '--list', 'List SDKs or entity types') { @options[:list] = true }
+        opt.on('-A', '--all', 'List all entity types within SDK') { @options[:all] = true }
       end
   end
 
   SUPPORTED_ENTITIES = YAML::load_file(File.expand_path(__FILE__) + ".yml")
 
   def _prepare_entities(sdk, type)
-    edef = SUPPORTED_ENTITIES[sdk][type]
+    edef = SUPPORTED_ENTITIES.dig(sdk, type)
     if edef.is_a?(String)
       type = edef
-      edef = SUPPORTED_ENTITIES[sdk][type]
+      edef = SUPPORTED_ENTITIES[sdk][type] # should exist
+      raise "unknown entity type: #{type}" unless edef
     end
-    raise "unknown entity type: #{type}" unless edef
+    edef ||= {}
     require(edef['require'] || "aws-sdk-#{sdk}")
 
-    method_name = edef['method'] || "describe_#{type}"
     params = edef['default_params'] || {}
     if @options[:filters].any?
       params[:filters] = @options[:filters].map{ |k,v| {name: k, values: [v]} }
     else
       params[:filters] = [edef["default_filter"]] if edef["default_filter"]
     end
+    if @options[:max_results]
+      params[:max_results] = @options[:max_results]
+    end
 
-    client_class = edef['client_class'] || "Aws::#{sdk.upcase}::Client"
+    client_class = edef['client_class'] || guess_client_class(sdk)
     client = Kernel.const_get(client_class).new
+    method_name = edef['method'] || (client.respond_to?("describe_#{type}") ? "describe_#{type}" : "list_#{type}")
+    unless client.respond_to?(method_name)
+      if type == "default"
+        STDERR.puts "[!] no default entity type set for #{sdk.inspect} SDK"
+      else
+        STDERR.puts "[!] #{sdk.inspect} SDK does not have #{type.inspect} entity type"
+      end
+      puts "Known entity types are:"
+      list_entity_types(sdk)
+      exit 1
+    end
     results = client.send(method_name, params)
 
-    edef["result_keys"] ||= [type]
+    if !edef["result_keys"] && results.any?
+      r = results.first
+      r = r.last if r.is_a?(Array)
+      if r.respond_to?(type)
+        edef["result_keys"] = [type]
+      else
+        edef["result_keys"] = [(r.members - [:next_token]).first]
+      end
+    end
     edef["result_keys"].each do |key|
       if results.is_a?(Array)
         results = results.map(&key.to_sym).flatten
@@ -69,10 +98,21 @@ class Lsaws
         results = results.send(key)
       end
     end
+
+    results ||= []
+
+    if !edef["cols"] && results.any?
+      if results.first.respond_to?(:members)
+        edef["cols"] = results.first.members[0,4]
+      else
+        # sqs
+        edef["cols"] = [{ value: Proc.new{ |entity| entity } }]
+      end
+    end
     col_defs = {}
-    edef["cols"].each do |r|
+    Array(edef["cols"]).each do |r|
       case r
-      when String
+      when String, Symbol
         col_defs[r] = Proc.new{ |entity| entity.send(r) }
       when Hash
         col_defs.merge!(r)
@@ -98,7 +138,13 @@ class Lsaws
 
   def entities2hashes sdk, type
     _prepare_entities(sdk, type) do |entity, col_defs|
-      Hash[col_defs.keys.map(&:to_s).zip col_defs.values.map{ |p| p.call(entity) }]
+      case entity
+      when String
+        { value: entity }
+      else
+        entity.to_h
+      end
+      #Hash[col_defs.keys.map(&:to_s).zip col_defs.values.map{ |p| p.call(entity) }]
     end
   end
 
@@ -124,11 +170,94 @@ class Lsaws
     end
   end
 
+  def get_sdks
+    r = []
+    Gem.path.each do |p|
+      next unless Dir.exist?(p)
+      r.append(*Dir[File.join(p, "gems/aws-sdk-*")].map do |gem_dir|
+        a = File.basename(gem_dir).split('-')
+        a.size == 4 ? a[2] : nil
+      end)
+    end
+    r.compact.uniq.sort - ['core']
+  end
+
+  def list_sdks
+    _list_array get_sdks
+  end
+
+  def _list_array a
+    case @options[:format]
+    when :json
+      puts a.to_json
+    when :yaml
+      puts a.to_yaml
+    else
+      puts a.join("\n")
+    end
+  end
+
+  def guess_client_class sdk
+    c = Aws.constants.find{ |x| x.to_s.downcase == sdk }
+    "Aws::#{c}::Client"
+  end
+
+  def _get_method_rdoc data, method
+    pos = data =~ /^\s+def\s+#{method}\s*\(/
+    return nil unless pos
+    chunk = ""
+    bs = 4096
+    while !chunk["\n\n"]
+      chunk = data[pos-bs..pos]
+      bs*=2
+    end
+    chunk[chunk.rindex("\n\n")+2..-1]
+  end
+
+  def get_entity_types sdk
+    require "aws-sdk-#{sdk}"
+    client_class = Kernel.const_get(guess_client_class(sdk))
+    methods = client_class
+      .instance_methods
+      .find_all{ |m| m =~ /^(describe|list)_.+s$/ && m !~ /(status|access)$/ }
+
+    return [] if methods.empty?
+
+    data = File.read(client_class.instance_method(methods[0]).source_location[0])
+    methods.delete_if do |m|
+      rdoc = _get_method_rdoc(data, m)
+      next unless rdoc
+      required_params = rdoc.scan(/^\s+# @option params \[required, (.+?)\] :(\w+)/)
+      required_params.any?
+    end
+
+    methods.map{ |m| m.to_s.sub(/^(describe|list)_/, '') }.sort
+  end
+
+  def list_entity_types sdk
+    _list_array get_entity_types sdk
+  end
+
   def process_command sdk, type = 'default'
+    if sdk == :list
+      return list_sdks
+    elsif type == :list
+      return list_entity_types(sdk)
+    elsif type == :all
+      get_entity_types(sdk).each do |etype|
+        puts "#{etype}:"
+        process_command(sdk, etype)
+      end
+      return
+    end
+
     case @options[:format]
     when :text, :table
       rows = entities2arrays(sdk, type)
       return unless rows.any?
+      rows.each do |row|
+        row.map!{ |col| col.to_s.size > 40 ? col.to_s[0,39] + "…" : col }
+      end
       hdr = rows.shift
       table = 
         if @options[:header]
@@ -143,22 +272,23 @@ class Lsaws
       end
       puts table
     when :json
-      require 'json' unless defined?(JSON)
-      rows = entities2hashes(cmd)
+      rows = entities2hashes(sdk, type)
       puts rows.to_json
     when :'json-stream'
-      require 'json' unless defined?(JSON)
-      rows = entities2hashes(cmd)
+      rows = entities2hashes(sdk, type)
       rows.each do |row|
         puts row.to_json
       end
     when :yaml
-      rows = entities2hashes(cmd)
+      rows = entities2hashes(sdk, type)
+      rows.each{ |row| row.transform_keys!(&:to_s) }
       puts rows.to_yaml
     else
       STDERR.puts "[!] unknown format: #{@options[:format]}"
       exit 1
     end
+  rescue Aws::Errors::ServiceError => e
+    STDERR.puts "[!] #{e}"
   end
 
   def run!

@@ -16,7 +16,7 @@ class Lsaws
       format: DEFAULT_FORMAT,
       header: true,
       filters: {},
-      only_cols: [],
+      show_cols: [],
       max_results: nil,
     }
     @commands = option_parser.parse!(argv)
@@ -39,7 +39,13 @@ class Lsaws
         opt.on('-v', '--verbose', 'Verbose output') { @options[:verbose] = true }
         opt.on('--no-header', 'Suppress header') { @options[:header] = false }
         opt.on('-f', '--filter K=V', 'Add filter') { |o| @options[:filters].merge!(Hash[*o.split("=",2)]) }
-        opt.on('--only C', 'Show only specified column(s)') { |o| @options[:only_cols] << o }
+        opt.on('-C', '--columns C', 'Show only specified column(s)') do |o|
+          if o[',']
+            @options[:show_cols].append(*o.split(","))
+          else
+            @options[:show_cols] << o
+          end
+        end
         opt.on('--max-results N', Integer, 'Fetch only specified number of results') { |o| @options[:max_results] = o }
         opt.on('--debug') { @options[:debug] = true }
 
@@ -104,17 +110,10 @@ class Lsaws
         results = results.send(key)
       end
     end
+    if @options[:show_cols].any?
+      edef['cols'] = @options[:show_cols]
+    end
 
-    results ||= []
-
-#    if !edef["cols"] && results.any?
-#      if results.first.respond_to?(:members)
-#        edef["cols"] = results.first.members[0,4]
-#      else
-#        # sqs
-#        edef["cols"] = [{ value: Proc.new{ |entity| entity } }]
-#      end
-#    end
     col_defs = {}
     Array(edef["cols"]).each do |r|
       case r
@@ -126,10 +125,9 @@ class Lsaws
         raise "unexpected #{r.inspect}"
       end
     end
-    col_defs["tags"] = _convert_tags_proc if @options[:show_tags]
-    if @options[:only_cols].any?
-      col_defs.delete_if{ |k,v| !@options[:only_cols].include?(k.to_s) }
-    end
+    col_defs["tags"] = _convert_tags_proc if @options[:show_tags] || col_defs["tags"]
+
+    results ||= []
     if results.any? && !results.first.respond_to?(:name)
       results.first.class.class_eval do
         def name
@@ -159,24 +157,37 @@ class Lsaws
   end
 
   def entities2hashes sdk, type
-    _prepare_entities(sdk, type) do |entity, _col_defs|
-      case entity
-      when String
-        { value: entity }
+    rows =
+      if @options[:show_cols].any?
+        _prepare_entities(sdk, type) do |entity, _col_defs|
+          case entity
+          when String
+            { value: entity } # might conflict with show_cols, let's always display for now
+          else
+            @options[:show_cols].map{ |c| [c, entity.send(c)] }.to_h
+          end
+        end
       else
-        entity.to_h
+        _prepare_entities(sdk, type) do |entity, _col_defs|
+          case entity
+          when String
+            { value: entity }
+          else
+            entity.to_h
+          end
+        end
       end
-      #Hash[col_defs.keys.map(&:to_s).zip col_defs.values.map{ |p| p.call(entity) }]
+    if rows.first.key?('tags')
+      rows.each do |row|
+        row['tags'] = row['tags'].map { |tag| [tag.key, tag.value] }.to_h
+      end
     end
+    rows
   end
 
+  # only for table/text view
   def _convert_tags_proc
-    case @options[:format]
-    when :table, :text
-      Proc.new{ |entity| entity.tags.map{ |tag| "#{tag.key}=#{tag.value}" }.join(", ") }
-    else
-      Proc.new{ |entity| Hash[*entity.tags.map{ |tag| [tag.key, tag.value] }.flatten] }
-    end
+    Proc.new{ |entity| entity.tags.map{ |tag| "#{tag.key}=#{tag.value}" }.join(", ") }
   end
 
   def get_sdks

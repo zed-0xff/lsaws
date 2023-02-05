@@ -48,6 +48,7 @@ class Lsaws
         end
         opt.on('--max-results N', Integer, 'Fetch only specified number of results') { |o| @options[:max_results] = o }
         opt.on('--debug') { @options[:debug] = true }
+        opt.on('--max-width X', Integer, 'max text width for table/text mode, default: auto') { |o| @options[:max_width] = o }
 
         opt.separator ""
         opt.on('-L', '--list', 'List SDKs or entity types') { @options[:list] = true }
@@ -259,15 +260,14 @@ class Lsaws
   end
 
   def _tabulo_guess_max_cols rows, cols
-    max_width = TTY::Screen.width
     max_cols = rows[0].members.size
-    return max_cols if max_cols < 4
+    return max_cols if max_cols < 4 || !@options[:max_width]
 
     4.upto(max_cols) do |ncols|
       tbl = Tabulo::Table.new(rows[0,100], *rows[0].members[0,ncols], border: :modern)
       tbl.autosize_columns
       tbl_width = tbl.column_registry.values.map{ |c| c.padded_width + 1 }.inject(:+) + 1
-      return ncols-1 if tbl_width >= max_width
+      return ncols-1 if tbl_width >= @options[:max_width]
     end
     max_cols
   end
@@ -287,6 +287,8 @@ class Lsaws
 
     case @options[:format]
     when :text, :table
+      @options[:max_width] ||= (STDOUT.tty? ? TTY::Screen.width : nil)
+
       rows, cols = entities2records(sdk, type)
       return unless rows.any?
 
@@ -301,7 +303,7 @@ class Lsaws
         max_cols = _tabulo_guess_max_cols(rows, cols)
         tbl = Tabulo::Table.new(rows, *rows[0].members[0,max_cols], border: :modern)
       end
-      puts tbl.pack
+      puts tbl.pack(max_table_width: @options[:max_width])
     when :json
       rows = entities2hashes(sdk, type)
       puts rows.to_json

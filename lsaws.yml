@@ -34,12 +34,7 @@ ec2:
     - instance_id
     - name
 kms:
-  keys:
-    method: list_keys
-    cols:
-    - key_id
   aliases:
-    method: list_aliases
     cols:
     - alias_name
     - target_key_id

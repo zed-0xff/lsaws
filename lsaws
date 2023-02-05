@@ -1,11 +1,14 @@
 #!/usr/bin/env ruby
-require 'terminal-table'
+require 'tabulo'
 require 'optparse'
 require 'json'
 require 'yaml'
+require 'aws-sdk-core'
+
+require_relative 'lib/lsaws/utils'
 
 class Lsaws
-  SUPPORTED_FORMATS = %w'table yaml json json-stream text'.sort
+  SUPPORTED_FORMATS = %w'table tabulo yaml json json-stream text'.sort
   DEFAULT_FORMAT    = :table
 
   def initialize argv
@@ -38,6 +41,7 @@ class Lsaws
         opt.on('-f', '--filter K=V', 'Add filter') { |o| @options[:filters].merge!(Hash[*o.split("=",2)]) }
         opt.on('--only C', 'Show only specified column(s)') { |o| @options[:only_cols] << o }
         opt.on('--max-results N', Integer, 'Fetch only specified number of results') { |o| @options[:max_results] = o }
+        opt.on('--debug') { @options[:debug] = true }
 
         opt.separator ""
         opt.on('-L', '--list', 'List SDKs or entity types') { @options[:list] = true }
@@ -82,6 +86,8 @@ class Lsaws
     end
     results = client.send(method_name, params)
 
+    pp results if @options[:debug]
+
     if !edef["result_keys"] && results.any?
       r = results.first
       r = r.last if r.is_a?(Array)
@@ -101,14 +107,14 @@ class Lsaws
 
     results ||= []
 
-    if !edef["cols"] && results.any?
-      if results.first.respond_to?(:members)
-        edef["cols"] = results.first.members[0,4]
-      else
-        # sqs
-        edef["cols"] = [{ value: Proc.new{ |entity| entity } }]
-      end
-    end
+#    if !edef["cols"] && results.any?
+#      if results.first.respond_to?(:members)
+#        edef["cols"] = results.first.members[0,4]
+#      else
+#        # sqs
+#        edef["cols"] = [{ value: Proc.new{ |entity| entity } }]
+#      end
+#    end
     col_defs = {}
     Array(edef["cols"]).each do |r|
       case r
@@ -131,13 +137,29 @@ class Lsaws
         end
       end
     end
-    results.map do |entity|
-      yield entity, col_defs
+
+    if block_given?
+      results.map do |entity|
+        yield entity, col_defs
+      end
+    else
+      [results, col_defs]
     end
   end
 
+  def entities2records sdk, type
+    rows, cols = _prepare_entities(sdk, type)
+    if rows.is_a?(Array) && rows[0].is_a?(String)
+      # sqs
+      cols = { value: Proc.new{ |entity| entity } }
+    elsif rows.respond_to?(:members)
+      rows = [rows]
+    end
+    [rows, cols]
+  end
+
   def entities2hashes sdk, type
-    _prepare_entities(sdk, type) do |entity, col_defs|
+    _prepare_entities(sdk, type) do |entity, _col_defs|
       case entity
       when String
         { value: entity }
@@ -145,19 +167,6 @@ class Lsaws
         entity.to_h
       end
       #Hash[col_defs.keys.map(&:to_s).zip col_defs.values.map{ |p| p.call(entity) }]
-    end
-  end
-
-  def entities2arrays sdk, type
-    hdr = nil
-    rows = _prepare_entities(sdk, type) do |entity, col_defs|
-      hdr ||= col_defs.keys.map(&:to_s)
-      col_defs.values.map{ |p| p.call(entity) }
-    end
-    if rows.any?
-      [hdr] + rows
-    else
-      []
     end
   end
 
@@ -238,6 +247,20 @@ class Lsaws
     _list_array get_entity_types sdk
   end
 
+  def _tabulo_guess_max_cols rows, cols
+    max_width = TTY::Screen.width
+    max_cols = rows[0].members.size
+    return max_cols if max_cols < 4
+
+    4.upto(max_cols) do |ncols|
+      tbl = Tabulo::Table.new(rows[0,100], *rows[0].members[0,ncols], border: :modern)
+      tbl.autosize_columns
+      tbl_width = tbl.column_registry.values.map{ |c| c.padded_width + 1 }.inject(:+) + 1
+      return ncols-1 if tbl_width >= max_width
+    end
+    max_cols
+  end
+
   def process_command sdk, type = 'default'
     if sdk == :list
       return list_sdks
@@ -253,24 +276,21 @@ class Lsaws
 
     case @options[:format]
     when :text, :table
-      rows = entities2arrays(sdk, type)
+      rows, cols = entities2records(sdk, type)
       return unless rows.any?
-      rows.each do |row|
-        row.map!{ |col| col.to_s.size > 40 ? col.to_s[0,39] + "…" : col }
-      end
-      hdr = rows.shift
-      table = 
-        if @options[:header]
-          Terminal::Table.new rows: rows, headings: hdr
-        else
-          Terminal::Table.new rows: rows
+
+      tbl = nil
+      if cols.any?
+        tbl = Tabulo::Table.new(rows, border: :modern) do |t|
+          cols.each do |name, func|
+            t.add_column name, &func
+          end
         end
-      if @options[:format] == :text
-        table.style = { border_x: '', border_y: '', border_i: '', border_top: false, border_bottom: false }
       else
-        table.style = { border: :unicode_round }
+        max_cols = _tabulo_guess_max_cols(rows, cols)
+        tbl = Tabulo::Table.new(rows, *rows[0].members[0,max_cols], border: :modern)
       end
-      puts table
+      puts tbl.pack
     when :json
       rows = entities2hashes(sdk, type)
       puts rows.to_json
@@ -281,7 +301,7 @@ class Lsaws
       end
     when :yaml
       rows = entities2hashes(sdk, type)
-      rows.each{ |row| row.transform_keys!(&:to_s) }
+      rows.each{ |row| Utils._deep_transform_keys_in_object!(row, &:to_s) }
       puts rows.to_yaml
     else
       STDERR.puts "[!] unknown format: #{@options[:format]}"

@@ -1,32 +1,27 @@
 # Lsaws
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/lsaws`. To experiment with that code, run `bin/console` for an interactive prompt.
-
-TODO: Delete this and the text above, and describe your gem
-
-## Installation
-
-Install the gem and add to the application's Gemfile by executing:
-
-    $ bundle add lsaws
-
-If bundler is not being used to manage dependencies, install the gem by executing:
-
-    $ gem install lsaws
+User-friendly AWS resources listing tool
 
 ## Usage
 
-TODO: Write usage instructions here
+    # lsaws
 
-## Development
+    Usage: lsaws [options] <sdk> [entity_type]
+        -o, --output FMT                 Format: js/json/json-stream/table/text/yaml
+            --no-header                  Suppress header
+        -x                               Shortcut for "-o text --no-header"
+            --tags                       Show tags
+        -f, --filter K=V                 Add filter
+        -C, --columns C                  Show only specified column(s)
+            --max-results N              Fetch only specified number of results
+            --max-width X                max text width for table/text mode, default: auto
+    
+        -v, --verbose                    Verbose output
+            --debug
+    
+        -L, --list                       List SDKs or entity types
+        -A, --all                        List all entity types within SDK
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
-
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
-
-## Contributing
-
-Bug reports and pull requests are welcome on GitHub at https://github.com/zed-0xff/lsaws. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [code of conduct](https://github.com/zed-0xff/lsaws/blob/master/CODE_OF_CONDUCT.md).
 
 ## License
 

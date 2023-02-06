@@ -1,10 +1,12 @@
+# frozen_string_literal: true
+
 class Lsaws
   module Utils
-		# copypasted from lib/active_support/core_ext/hash/keys.rb
+    # copypasted from lib/active_support/core_ext/hash/keys.rb
     def self._deep_transform_keys_in_object!(object, &block)
       case object
       when Hash
-        object.keys.each do |key|
+        object.each_key do |key|
           value = object.delete(key)
           object[yield(key)] = _deep_transform_keys_in_object!(value, &block)
         end

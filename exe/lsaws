@@ -7,7 +7,7 @@ require "json"
 require "yaml"
 require "aws-sdk-core"
 
-require_relative "lib/lsaws/utils"
+require_relative "../lib/lsaws/utils"
 
 class Lsaws
   SUPPORTED_FORMATS = %w[table yaml json json-stream js text].sort
@@ -67,7 +67,7 @@ class Lsaws
       end
   end
 
-  SUPPORTED_ENTITIES = YAML.load_file("#{File.expand_path(__FILE__)}.yml")
+  SUPPORTED_ENTITIES = YAML.load_file(File.join(File.dirname(File.dirname(File.expand_path(__FILE__))),"lsaws.yml"))
 
   def _prepare_entities(sdk, type)
     edef = SUPPORTED_ENTITIES.dig(sdk, type)
@@ -350,4 +350,4 @@ class Lsaws
   end
 end
 
-Lsaws.new(ARGV).run! if __FILE__ == $PROGRAM_NAME
+Lsaws.new(ARGV).run!

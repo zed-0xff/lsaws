@@ -5,4 +5,11 @@ set -vx
 
 bundle install
 
-# Do any other automated setup that you need to do here
+mkdir -p tmp
+cd tmp
+if [ -d aws-cli ]; then
+        cd aws-cli
+        git pull
+else
+        git clone git@github.com:aws/aws-cli.git
+fi

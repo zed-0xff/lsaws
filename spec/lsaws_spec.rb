@@ -6,6 +6,6 @@ RSpec.describe Lsaws do
   end
 
   it "does something useful" do
-    expect(false).to eq(true)
+    p AwsCliSample.get("ec2", "describe-instances")
   end
 end

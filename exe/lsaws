@@ -67,7 +67,7 @@ class Lsaws
       end
   end
 
-  SUPPORTED_ENTITIES = YAML.load_file(File.join(File.dirname(File.dirname(File.expand_path(__FILE__))),"lsaws.yml"))
+  SUPPORTED_ENTITIES = YAML.load_file(File.join(File.dirname(File.dirname(File.expand_path(__FILE__))), "lsaws.yml"))
 
   def _prepare_entities(sdk, type)
     edef = SUPPORTED_ENTITIES.dig(sdk, type)

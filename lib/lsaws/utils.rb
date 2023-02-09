@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-class Lsaws
+module Lsaws
   module Utils
     # copypasted from lib/active_support/core_ext/hash/keys.rb
     def self._deep_transform_keys_in_object!(object, &block)

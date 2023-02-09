@@ -1,8 +1,13 @@
 # frozen_string_literal: true
 
-require_relative "lsaws/version"
-
 module Lsaws
   class Error < StandardError; end
-  # Your code goes here...
+
+  def self.root
+    File.dirname(File.dirname(File.expand_path(__FILE__)))
+  end
 end
+
+require_relative "lsaws/version"
+require_relative "lsaws/cli"
+require_relative "lsaws/lister"

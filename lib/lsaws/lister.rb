@@ -28,7 +28,8 @@ module Lsaws
       end
       params[:max_results] = @options[:max_results] if @options[:max_results]
 
-      client_class = edef["client_class"] || guess_client_class(sdk)
+      sdkp = SDKParser.new(sdk)
+      client_class = edef["client_class"] || sdkp.client_class_name
       client = Kernel.const_get(client_class).new
       method_name = edef["method"] || (client.respond_to?("describe_#{type}") ? "describe_#{type}" : "list_#{type}")
       unless client.respond_to?(method_name)
@@ -146,21 +147,8 @@ module Lsaws
       proc { |entity| entity.tags.map { |tag| "#{tag.key}=#{tag.value}" }.join(", ") }
     end
 
-    def get_sdks
-      r = []
-      Gem.path.each do |p|
-        next unless Dir.exist?(p)
-
-        r.append(*Dir[File.join(p, "gems/aws-sdk-*")].map do |gem_dir|
-          a = File.basename(gem_dir).split("-")
-          a.size == 4 ? a[2] : nil
-        end)
-      end
-      r.compact.uniq.sort - ["core"]
-    end
-
     def list_sdks
-      _list_array get_sdks
+      _list_array SDKParser.get_sdks
     end
 
     def _list_array(a)
@@ -174,47 +162,8 @@ module Lsaws
       end
     end
 
-    def guess_client_class(sdk)
-      c = Aws.constants.find { |x| x.to_s.downcase == sdk }
-      "Aws::#{c}::Client"
-    end
-
-    def _get_method_rdoc(data, method)
-      pos = data =~ /^\s+def\s+#{method}\s*\(/
-      return nil unless pos
-
-      chunk = ""
-      bs = 4096
-      until chunk["\n\n"]
-        chunk = data[pos - bs..pos]
-        bs *= 2
-      end
-      chunk[chunk.rindex("\n\n") + 2..]
-    end
-
-    def get_entity_types(sdk)
-      require "aws-sdk-#{sdk}"
-      client_class = Kernel.const_get(guess_client_class(sdk))
-      methods = client_class
-                .instance_methods
-                .find_all { |m| m =~ /^(describe|list)_.+s$/ && m !~ /(status|access)$/ }
-
-      return [] if methods.empty?
-
-      data = File.read(client_class.instance_method(methods[0]).source_location[0])
-      methods.delete_if do |m|
-        rdoc = _get_method_rdoc(data, m)
-        next unless rdoc
-
-        required_params = rdoc.scan(/^\s+# @option params \[required, (.+?)\] :(\w+)/)
-        required_params.any?
-      end
-
-      methods.map { |m| m.to_s.sub(/^(describe|list)_/, "") }.sort
-    end
-
     def list_entity_types(sdk)
-      _list_array get_entity_types sdk
+      _list_array SDKParser.new(sdk).entity_types
     end
 
     def _tabulo_guess_max_cols(rows, _cols)

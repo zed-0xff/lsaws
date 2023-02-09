@@ -9,5 +9,6 @@ module Lsaws
 end
 
 require_relative "lsaws/version"
+require_relative "lsaws/sdk_parser"
 require_relative "lsaws/cli"
 require_relative "lsaws/lister"

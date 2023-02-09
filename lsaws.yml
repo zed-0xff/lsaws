@@ -39,3 +39,5 @@ kms:
     - alias_name
     - target_key_id
     - last_updated_date
+s3:
+  default: buckets

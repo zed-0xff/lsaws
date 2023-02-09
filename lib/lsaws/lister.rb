@@ -15,11 +15,8 @@ module Lsaws
 
     def _prepare_entities(sdk, type)
       edef = CONFIG.dig(sdk, type)
-      if edef.is_a?(String)
-        type = edef
-        edef = CONFIG[sdk][type] # should exist
-        raise Error, "unknown entity type: #{type}" unless edef
-      end
+      return _prepare_entities(sdk, edef) if edef.is_a?(String) # redirect like 'default' -> 'instances'
+
       edef ||= {}
       require(edef["require"] || "aws-sdk-#{sdk}")
 

@@ -9,13 +9,15 @@ module Lsaws
   class Lister
     CONFIG = YAML.load_file(File.join(Lsaws.root, "lsaws.yml"))
 
+    include Utils
+
     def initialize(options)
       @options = options
     end
 
-    def _prepare_entities(sdk, type)
+    def _prepare_entities(sdk, type, &block)
       edef = CONFIG.dig(sdk, type)
-      return _prepare_entities(sdk, edef) if edef.is_a?(String) # redirect like 'default' -> 'instances'
+      return _prepare_entities(sdk, edef, &block) if edef.is_a?(String) # redirect like 'default' -> 'instances'
 
       edef ||= {}
       require(edef["require"] || "aws-sdk-#{sdk}")
@@ -219,8 +221,7 @@ module Lsaws
         end
       when :yaml
         rows = entities2hashes(sdk, type)
-        rows.each { |row| Utils._deep_transform_keys_in_object!(row, &:to_s) }
-        puts rows.to_yaml
+        puts rows.map { |row| _deep_transform_keys_in_object(row, &:to_s) }.to_yaml
       else
         warn "[!] unknown format: #{@options[:format]}"
         exit 1

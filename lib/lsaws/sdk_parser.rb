@@ -39,9 +39,8 @@ module Lsaws
 
       return [] if methods.empty?
 
-      data = File.read(client_class.instance_method(methods[0]).source_location[0])
       methods.delete_if do |m|
-        rdoc = _get_method_rdoc(data, m)
+        rdoc = get_method_rdoc(m)
         next(true) unless rdoc
 
         required_params = rdoc.scan(/^\s+# @option params \[required, (.+?)\] :(\w+)/)
@@ -51,14 +50,16 @@ module Lsaws
       methods.map { |m| m.to_s.sub(/^(describe|list)_/, "") }.sort
     end
 
-    def _get_method_rdoc(data, method)
-      pos = data =~ /^\s+def\s+#{method}\s*\(/
+    def get_method_rdoc(method)
+      @source ||= File.read(client_class.instance_method(method).source_location[0])
+
+      pos = @source =~ /^\s+def\s+#{method}\s*\(/
       return nil unless pos
 
       chunk = ""
       bs = 4096
       until chunk["\n\n"]
-        chunk = data[pos - bs..pos]
+        chunk = @source[pos - bs..pos]
         bs *= 2
       end
       chunk[chunk.rindex("\n\n") + 2..]

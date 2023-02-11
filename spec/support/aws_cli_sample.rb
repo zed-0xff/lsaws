@@ -6,6 +6,38 @@ require "active_support/core_ext/string/inflections"
 
 module AwsCliSample
   class << self
+
+    def get_rubydoc_example(sdk, method)
+      rdoc = Lsaws::SDKParser.new(sdk).get_method_rdoc(method)
+      examples = []
+      rdoc.scan(/^\s*# @example Example:/) do
+        pos = Regexp.last_match.offset(0).first
+        io = StringIO.new(rdoc[pos..-1])
+        example_title = io.gets.split("@example ",2).last
+
+        raise if io.gets !~ /^\s*\#$/
+        data = String.new
+        loop do
+          line = io.gets
+          break unless line == "    #\n" || line.start_with?("    #   ")
+          data << line
+        end
+        r = data
+          .scan(/^    #   resp\.to_h outputs the following:(.+?^    #   \})$/m)[0][0]
+          .gsub(/^    #/, "")
+        r = eval(r) # XXX FIXME FIXME FIXME XXX
+        examples << [example_title, r]
+      end
+      case examples.size
+      when 0
+        raise "no examples found for #{sdk}:#{method}"
+      when 1
+        return examples[0][1]
+      when 2
+        raise "multiple examples found for #{sdk}:#{method}"
+      end
+    end
+
     def get(sdk, cmd, underscore: true, symbolize: true, transform_values: true)
       fname = "tmp/aws-cli/awscli/examples/#{sdk}/#{cmd}.rst"
       File.open(fname) do |f|
@@ -43,12 +75,13 @@ module AwsCliSample
       end
     end
 
+    # generates skeleton response from "@example Response structure" rubydoc comment
     def generate(sdk, method)
       rdoc = Lsaws::SDKParser.new(sdk).get_method_rdoc(method)
       pos = rdoc.index(/^\s*# @example Response structure/)
-        io = StringIO.new(rdoc[pos..-1])
+      io = StringIO.new(rdoc[pos..-1])
       raise if io.gets !~ /^\s*# @example Response structure$/
-        raise if io.gets !~ /^\s*\#$/
+      raise if io.gets !~ /^\s*\#$/
       res = {}
       loop do
         line = io.gets

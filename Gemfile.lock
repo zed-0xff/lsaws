@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    lsaws (0.1.0)
+    lsaws (0.2.0)
       aws-sdk-core (~> 3.131)
       tabulo (~> 2.8)
 

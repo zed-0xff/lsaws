@@ -2,6 +2,11 @@
 
 module Lsaws
   class SDKParser
+    IGNORED_SDKS = [
+      "core", "resources", # do not contain any resource listing methods
+      "s3control" # requires account_id param for all requests
+    ].freeze
+
     def self.get_sdks
       r = []
       Gem.path.each do |p|
@@ -12,7 +17,7 @@ module Lsaws
           a.size == 4 ? a[2] : nil
         end)
       end
-      r.compact.uniq.sort - ["core", "resources"]
+      r.compact.uniq.sort - IGNORED_SDKS
     end
 
     def initialize(sdk)
@@ -35,7 +40,7 @@ module Lsaws
 
     def etype2method(etype)
       ["list_#{etype}", "describe_#{etype}", "get_#{etype}"]
-        .find{ |m| client_class.public_method_defined?(m) }
+        .find { |m| client_class.public_method_defined?(m) }
     end
 
     def method2etype(method)

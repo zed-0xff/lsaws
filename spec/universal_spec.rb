@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-sdks = 
-  case ENV['SDK']
+sdks =
+  case ENV["SDK"]
   when nil
     Lsaws::SDKParser.get_sdks
   when /[*?]/
-    Lsaws::SDKParser.get_sdks.find_all{ |sdk| File.fnmatch(ENV['SDK'], sdk) }
+    Lsaws::SDKParser.get_sdks.find_all { |sdk| File.fnmatch(ENV["SDK"], sdk) }
   else
-    ENV['SDK'].split
+    ENV["SDK"].split
   end
 
 sdks.each do |sdk|
@@ -23,11 +23,12 @@ sdks.each do |sdk|
         before do
           method_name = sdkp.etype2method(etype)
           expect(sdkp.client_class).to receive(:new).and_wrap_original do |m, *_args|
-            if ENV['AWS_RESPONSE_GENERATOR'] == 'live'
+            if ENV["AWS_RESPONSE_GENERATOR"] == "live"
               m.call
             else
               @data = AwsCliSample.get(sdk, method_name)
-              m.call(stub_responses: { method_name.to_sym => @data })
+              # endpoint was required by `iotdataplane` SDK for some reason
+              m.call(stub_responses: { method_name.to_sym => @data }, endpoint: "https://localhost:2222")
             end
           end
           @args = "#{sdk} #{etype}"
@@ -35,9 +36,9 @@ sdks.each do |sdk|
 
         it "outputs a table" do
           cmd = "#{@args} --max-width 120"
-          cmd = "#{cmd} --debug" if ENV['DEBUG']
+          cmd = "#{cmd} --debug" if ENV["DEBUG"]
           table = run! cmd
-          STDERR.puts(table) if ENV['DEBUG'] || ENV['SHOW']
+          warn(table) if ENV["DEBUG"] || ENV["SHOW"]
           expect(table.split("\n").size).to be >= 5
         end
       end

@@ -6,10 +6,11 @@ Dir["#{File.dirname(__FILE__)}/support/**/*.rb"].sort.each { |f| require f }
 
 include Lsaws::Utils
 
-def run! args
+def run!(args)
   args = args.split if args.is_a?(String)
   out = StringIO.new
-  saved_out, $stdout = $stdout, out
+  saved_out = $stdout
+  $stdout = out
   Lsaws::CLI.new(args).run!
   out.string
 ensure

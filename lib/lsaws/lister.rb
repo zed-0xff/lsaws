@@ -10,7 +10,7 @@ module Lsaws
 
     def initialize(options)
       @options = options
-      @options[:max_width] = nil if @options[:max_width] == 0
+      @options[:max_width] = nil if @options[:max_width].to_i.zero?
     end
 
     def _prepare_entities(sdk, type, &block)
@@ -42,19 +42,19 @@ module Lsaws
         list_entity_types(sdk)
         exit 1
       end
-      $stderr.puts "[d] #{method_name} #{params}" if @options[:debug]
+      warn "[d] #{method_name} #{params}" if @options[:debug]
       results = client.send(method_name, params)
 
-      $stderr.puts "[d] #{File.basename(__FILE__)}:#{__LINE__} results:\n#{results.pretty_inspect}" if @options[:debug]
+      warn "[d] #{File.basename(__FILE__)}:#{__LINE__} results:\n#{results.pretty_inspect}" if @options[:debug]
 
       if !edef["result_keys"] && results.any?
         r = results.first
         r = r.last if r.is_a?(Array)
-        edef["result_keys"] = 
+        edef["result_keys"] =
           if r.respond_to?(type)
             [type]
           elsif r.respond_to?(:next_token) || r.respond_to?(:next_marker)
-            data_members = r.members - [:next_token, :next_marker]
+            data_members = r.members - %i[next_token next_marker]
             if data_members.size == 1
               [data_members[0]]
             else
@@ -74,9 +74,9 @@ module Lsaws
                   end
       end
 
-      $stderr.puts "[d] #{File.basename(__FILE__)}:#{__LINE__} results:\n#{results.pretty_inspect}" if @options[:debug]
+      warn "[d] #{File.basename(__FILE__)}:#{__LINE__} results:\n#{results.pretty_inspect}" if @options[:debug]
       edef["cols"] = @options[:show_cols] if @options[:show_cols].any?
-      $stderr.puts "[d] edef: #{edef}" if @options[:debug]
+      warn "[d] edef: #{edef}" if @options[:debug]
 
       col_defs = {}
       Array(edef["cols"]).each do |r|
@@ -93,7 +93,7 @@ module Lsaws
       col_defs["tags"] = _convert_tags_proc if @options[:show_tags] || col_defs["tags"]
 
       results ||= []
-      $stderr.puts "[d] #{results.inspect}" if @options[:debug]
+      warn "[d] #{results.inspect}" if @options[:debug]
       if results.any? && !results.first.respond_to?(:name) && results.first.respond_to?(:tags)
         results.first.class.class_eval do
           def name
@@ -106,7 +106,7 @@ module Lsaws
       when Hash
         col_defs = {
           key: :first,
-          value: :last,
+          value: :last
         }
       when Array
         # ok
@@ -129,6 +129,9 @@ module Lsaws
       rows, cols = _prepare_entities(sdk, type)
       if rows.is_a?(Array) && rows[0].is_a?(String)
         # sqs
+        cols = { value: proc { |entity| entity } }
+      elsif rows.is_a?(Array) && rows[0].is_a?(Hash)
+        # securitylake:log_sources
         cols = { value: proc { |entity| entity } }
       elsif rows.respond_to?(:members)
         rows = [rows]
@@ -243,7 +246,7 @@ module Lsaws
           cols.each { |name, func| tbl.add_column(name, &func) }
         else
           max_cols = _tabulo_guess_max_cols(rows, cols)
-          _get_cols(rows[0])[0,max_cols].each { |col| tbl.add_column(col) }
+          _get_cols(rows[0])[0, max_cols].each { |col| tbl.add_column(col) }
         end
         puts tbl.pack(max_table_width: @options[:max_width])
       when :json

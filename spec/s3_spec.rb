@@ -26,13 +26,13 @@ RSpec.describe "s3" do
 
       it "outputs a table" do
         sample = <<~EOF
-        ┌────────────────┬─────────────────────────┐
-        │ name           │ creation_date           │
-        ├────────────────┼─────────────────────────┤
-        │ examplebucket  │ 2012-02-15 21:03:02 UTC │
-        │ examplebucket2 │ 2011-07-24 19:33:50 UTC │
-        │ examplebucket3 │ 2010-12-17 00:56:49 UTC │
-        └────────────────┴─────────────────────────┘
+          ┌────────────────┬─────────────────────────┐
+          │ name           │ creation_date           │
+          ├────────────────┼─────────────────────────┤
+          │ examplebucket  │ 2012-02-15 21:03:02 UTC │
+          │ examplebucket2 │ 2011-07-24 19:33:50 UTC │
+          │ examplebucket3 │ 2010-12-17 00:56:49 UTC │
+          └────────────────┴─────────────────────────┘
         EOF
         table = run! "#{@args} --max-width 120"
         expect(table).to eq(sample)

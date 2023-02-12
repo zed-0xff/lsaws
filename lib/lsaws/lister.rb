@@ -227,7 +227,7 @@ module Lsaws
       elsif type == :list
         return list_entity_types(sdk)
       elsif type == :all
-        get_entity_types(sdk).each do |etype|
+        SDKParser.new(sdk).entity_types.each do |etype|
           puts "#{etype}:"
           process_command(sdk, etype)
         end

@@ -5,7 +5,35 @@ require "active_support/core_ext/hash"
 require "active_support/core_ext/string/inflections"
 
 module AwsCliSample
+  class FullAwsStub < Aws::Stubbing::EmptyStub
+    # original implementation returns empty lists for ListShape members, but we want nonempty
+    def stub_ref(ref, visited = [])
+      super.tap do |r|
+        if ref.shape.is_a?(ListShape) && r == []
+          return [FullAwsStub.new(ref.shape.member).stub]
+        elsif ref.shape.is_a?(MapShape) && r == {}
+          r[FullAwsStub.new(ref.shape.key).stub] = FullAwsStub.new(ref.shape.value).stub
+        end
+      end
+    end
+  end
+
   class << self
+
+    def get(sdk, method, source: nil)
+      source ||= ENV['AWS_RESPONSE_GENERATOR']
+      if source
+        return send("get_#{source}", sdk, method)
+      end
+      get_rubydoc_example(sdk, method) || 
+        get_api_structure(sdk, method)
+    end
+
+    def get_live(sdk, method)
+      raise "should be handled earlier"
+    end
+
+    Example = Struct.new(:title, :call, :result)
 
     def get_rubydoc_example(sdk, method)
       rdoc = Lsaws::SDKParser.new(sdk).get_method_rdoc(method)
@@ -13,7 +41,7 @@ module AwsCliSample
       rdoc.scan(/^\s*# @example Example:/) do
         pos = Regexp.last_match.offset(0).first
         io = StringIO.new(rdoc[pos..-1])
-        example_title = io.gets.split("@example ",2).last
+        title = io.gets.split("@example ",2).last
 
         raise if io.gets !~ /^\s*\#$/
         data = String.new
@@ -22,24 +50,33 @@ module AwsCliSample
           break unless line == "    #\n" || line.start_with?("    #   ")
           data << line
         end
-        r = data
+
+        call = data
+          .scan(/^    #   resp = client\.#{method}\({$.*?^    #   \}\)$/m)[0]
+        result = data
           .scan(/^    #   resp\.to_h outputs the following:(.+?^    #   \})$/m)[0][0]
           .gsub(/^    #/, "")
-        r = eval(r) # XXX FIXME FIXME FIXME XXX
-        examples << [example_title, r]
+        result = eval(result) # XXX FIXME FIXME FIXME XXX
+        examples << Example.new(title, call, result) unless result.empty?
       end
+
       case examples.size
       when 0
-        raise "no examples found for #{sdk}:#{method}"
+        nil
       when 1
-        return examples[0][1]
+        examples[0].result
       when 2
-        raise "multiple examples found for #{sdk}:#{method}"
+        #raise "multiple examples found for #{sdk}:#{method}: " + examples.map(&:title).join(", ")
+        # get one with shorter call definition
+        examples.sort_by{ |x| x.call.size }[0].result
       end
     end
 
-    def get(sdk, cmd, underscore: true, symbolize: true, transform_values: true)
+    def get_awscli_example(sdk, method, underscore: true, symbolize: true, transform_values: true)
+      cmd = method.tr("_", "-")
       fname = "tmp/aws-cli/awscli/examples/#{sdk}/#{cmd}.rst"
+      return nil unless File.exist?(fname)
+
       File.open(fname) do |f|
         line = f.gets
         line = f.gets while line.strip != "Output::"
@@ -75,8 +112,14 @@ module AwsCliSample
       end
     end
 
+    def get_api_structure(sdk, method)
+      # Seahorse::Model::Operation
+      api = Lsaws::SDKParser.new(sdk).get_method_api(method)
+      FullAwsStub.new(api.output).stub
+    end
+
     # generates skeleton response from "@example Response structure" rubydoc comment
-    def generate(sdk, method)
+    def get_rubydoc_structure(sdk, method)
       rdoc = Lsaws::SDKParser.new(sdk).get_method_rdoc(method)
       pos = rdoc.index(/^\s*# @example Response structure/)
       io = StringIO.new(rdoc[pos..-1])
@@ -87,7 +130,19 @@ module AwsCliSample
         line = io.gets
         break unless line =~ /^\s*#\s+resp\.(.+)\s+#=>\s+(.+)$/
         t = $2
-        a = $1.split(/(\[0\])?\./).map{ |x| x == "[0]" ? 0 : x.to_sym }
+        a = $1.split(/(?:(\[0\])|\.)+/).map do |x|
+          case x
+          when "[0]"
+            0
+          when /^\w+$/
+            x.to_sym
+          when /^(\w+)\["(\w+)"\]$/
+            [$1.to_sym, $2] # 2nd arg intentionally a String
+          else
+            raise "Unexpected #{x.inspect}"
+          end
+        end.flatten
+        #$stderr.puts "[d] #{a}" if ENV['DEBUG'] == '2'
         dig_set(res, a, _gen_value(t))
       end
       res
@@ -119,10 +174,14 @@ module AwsCliSample
       case t
       when "Array"
         []
+      when "Float"
+        1.1
+      when "Hash"
+        {}
       when "Integer"
         0
       when "String"
-        ""
+        "String"
       when /String, one of "([^"]+)"/
         $1
       when "Time"

@@ -3,20 +3,18 @@
 require "aws-sdk-core"
 require "json"
 require "tabulo"
-require "yaml"
 
 module Lsaws
   class Lister
-    CONFIG = YAML.load_file(File.join(Lsaws.root, "lsaws.yml"))
-
     include Utils
 
     def initialize(options)
       @options = options
+      @options[:max_width] = nil if @options[:max_width] == 0
     end
 
     def _prepare_entities(sdk, type, &block)
-      edef = CONFIG.dig(sdk, type)
+      edef = Lsaws.config.dig(sdk, type)
       return _prepare_entities(sdk, edef, &block) if edef.is_a?(String) # redirect like 'default' -> 'instances'
 
       edef ||= {}
@@ -33,7 +31,7 @@ module Lsaws
       sdkp = SDKParser.new(sdk)
       client_class = edef["client_class"] || sdkp.client_class_name
       client = Kernel.const_get(client_class).new
-      method_name = edef["method"] || (client.respond_to?("describe_#{type}") ? "describe_#{type}" : "list_#{type}")
+      method_name = edef["method"] || sdkp.etype2method(type)
       unless client.respond_to?(method_name)
         if type == "default"
           warn "[!] no default entity type set for #{sdk.inspect} SDK"
@@ -44,27 +42,34 @@ module Lsaws
         list_entity_types(sdk)
         exit 1
       end
+      $stderr.puts "[d] #{method_name} #{params}" if @options[:debug]
       results = client.send(method_name, params)
 
-      pp results if @options[:debug]
+      $stderr.puts "[d] #{File.basename(__FILE__)}:#{__LINE__} results:\n#{results.pretty_inspect}" if @options[:debug]
 
       if !edef["result_keys"] && results.any?
         r = results.first
         r = r.last if r.is_a?(Array)
-        edef["result_keys"] = if r.respond_to?(type)
-                                [type]
-                              else
-                                [(r.members - [:next_token]).first]
-                              end
+        edef["result_keys"] = 
+          if r.respond_to?(type)
+            [type]
+          else
+            # XXX what if there's more than one array?
+            [(r.members - [:next_token, :next_marker]).find { |key| r[key].is_a?(Array) }].compact
+          end
       end
+
       edef["result_keys"].each do |key|
         results = if results.is_a?(Array)
-                    results.map(&key.to_sym).flatten
+                    results.map(&key.to_sym).flatten # TODO: is flatten necessary?
                   else
-                    results.send(key)
+                    results[key]
                   end
       end
+
+      $stderr.puts "[d] #{File.basename(__FILE__)}:#{__LINE__} results:\n#{results.pretty_inspect}" if @options[:debug]
       edef["cols"] = @options[:show_cols] if @options[:show_cols].any?
+      $stderr.puts "[d] edef: #{edef}" if @options[:debug]
 
       col_defs = {}
       Array(edef["cols"]).each do |r|
@@ -77,9 +82,11 @@ module Lsaws
           raise Error, "unexpected #{r.inspect}"
         end
       end
+      # TODO: check with all types
       col_defs["tags"] = _convert_tags_proc if @options[:show_tags] || col_defs["tags"]
 
       results ||= []
+      $stderr.puts "[d] #{results.inspect}" if @options[:debug]
       if results.any? && !results.first.respond_to?(:name)
         results.first.class.class_eval do
           def name
@@ -88,9 +95,19 @@ module Lsaws
         end
       end
 
-      # ec2 instance_event_notification_attributes
-      # 'Array(results)' doesn't work here
-      results = [results] unless results.is_a?(Array)
+      case results
+      when Hash
+        col_defs = {
+          key: :first,
+          value: :last,
+        }
+      when Array
+        # ok
+      else
+        # ec2 instance_event_notification_attributes
+        # 'Array(results)' doesn't work here
+        results = [results]
+      end
 
       if block_given?
         results.map do |entity|

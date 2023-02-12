@@ -18,7 +18,7 @@ RSpec.describe "ec2" do
     describe x do
       before do
         expect(Aws::EC2::Client).to receive(:new).and_wrap_original do |m, *_args|
-          @data = AwsCliSample.get("ec2", "describe-instances")
+          @data = AwsCliSample.get_awscli_example("ec2", "describe_instances")
           m.call(stub_responses: { describe_instances: @data })
         end
         @args = x == :default ? "ec2" : "ec2 instances"
@@ -37,7 +37,7 @@ RSpec.describe "ec2" do
       end
 
       it "outputs JSON" do
-        src = AwsCliSample.get("ec2", "describe-instances", transform_values: false, symbolize: false)
+        src = AwsCliSample.get_awscli_example("ec2", "describe_instances", transform_values: false, symbolize: false)
           .dig("reservations", 0, "instances")
         dst = JSON.parse(to_iso8601(run!("#{@args} -o json")))
         expect(dst).to eq(src)
@@ -48,7 +48,7 @@ RSpec.describe "ec2" do
   describe "images" do
     before do
       expect(Aws::EC2::Client).to receive(:new).and_wrap_original do |m, *_args|
-        @data = AwsCliSample.get("ec2", "describe-images")
+        @data = AwsCliSample.get_awscli_example("ec2", "describe_images")
         m.call(stub_responses: { describe_images: @data })
       end
     end
@@ -66,7 +66,7 @@ RSpec.describe "ec2" do
     end
 
     it "outputs JSON" do
-      src = AwsCliSample.get("ec2", "describe-images", transform_values: false, symbolize: false)
+      src = AwsCliSample.get_awscli_example("ec2", "describe_images", transform_values: false, symbolize: false)
         .dig("images")
       dst = JSON.parse(to_iso8601(run!(%w"ec2 images -o json")))
       expect(dst).to eq(src)

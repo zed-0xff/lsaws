@@ -8,6 +8,8 @@ module Lsaws
   class Lister
     include Utils
 
+    NEXT_PAGE_FIELDS = %i[next_token next_marker next_page_token page_token].freeze
+
     def initialize(options)
       @options = options
       @options[:max_width] = nil if @options[:max_width].to_i.zero?
@@ -53,8 +55,8 @@ module Lsaws
         edef["result_keys"] =
           if r.respond_to?(type)
             [type]
-          elsif r.respond_to?(:next_token) || r.respond_to?(:next_marker)
-            data_members = r.members - %i[next_token next_marker]
+          elsif NEXT_PAGE_FIELDS.any? { |t| r.respond_to?(t) }
+            data_members = r.members - NEXT_PAGE_FIELDS
             if data_members.size == 1
               [data_members[0]]
             else

@@ -4,7 +4,10 @@ require "json"
 require "active_support/core_ext/hash"
 require "active_support/core_ext/string/inflections"
 
+# TODO: better name
 module AwsCliSample
+  FIXED_TIMESTAMP = Time.utc(2022, 2, 2, 22, 22, 22).freeze
+
   class FullAwsStub < Aws::Stubbing::EmptyStub
 
     # added keeping `visited` list between different nested classes, see emrcontainers:job_templates
@@ -26,6 +29,14 @@ module AwsCliSample
           v = FullAwsStub.new(ref.shape.value).stub(visited)
           r[k] = v
         end
+      end
+    end
+
+    # returning fixed timestamp
+    def stub_scalar(ref)
+      case ref.shape
+      when TimestampShape then FIXED_TIMESTAMP
+      else super
       end
     end
   end
@@ -201,7 +212,7 @@ module AwsCliSample
       when /String, one of "([^"]+)"/
         $1
       when "Time"
-        Time.new(2022, 2, 2, 22, 22, 22)
+        FIXED_TIMESTAMP
       when "Boolean"
         false
       else

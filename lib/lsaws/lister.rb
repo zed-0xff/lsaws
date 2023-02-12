@@ -96,7 +96,7 @@ module Lsaws
 
       results ||= []
       warn "[d] #{results.inspect}" if @options[:debug]
-      if results.any? && !results.first.respond_to?(:name) && results.first.respond_to?(:tags)
+      if results.respond_to?(:any?) && results.any? && !results.first.respond_to?(:name) && results.first.respond_to?(:tags)
         results.first.class.class_eval do
           def name
             tags.find { |tag| tag.key == "Name" }&.value

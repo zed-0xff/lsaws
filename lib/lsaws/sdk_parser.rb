@@ -38,19 +38,25 @@ module Lsaws
       @client_class ||= Kernel.const_get(client_class_name)
     end
 
+    # order is important!
+    LIST_METHOD_PREFIXES = %w[list describe get].freeze
+
     def etype2method(etype)
-      ["list_#{etype}", "describe_#{etype}", "get_#{etype}"]
-        .find { |m| client_class.public_method_defined?(m) }
+      LIST_METHOD_PREFIXES.each do |prefix|
+        m = "#{prefix}_#{etype}"
+        return m if client_class.public_method_defined?(m)
+      end
+      nil
     end
 
     def method2etype(method)
-      method.to_s.sub(/^(describe|list|get)_/, "")
+      method.to_s.sub(/^(?:#{LIST_METHOD_PREFIXES.join("|")})_/, "")
     end
 
     def entity_types
       methods = client_class
                 .instance_methods
-                .find_all { |m| m =~ /^(describe|list)_.+s$/ && m !~ /(status|access)$/ }
+                .find_all { |m| m =~ /^(?:#{LIST_METHOD_PREFIXES.join("|")})_.+s$/ && m !~ /(?:status|access)$/ }
 
       return [] if methods.empty?
 
@@ -62,7 +68,7 @@ module Lsaws
         required_params.any? || Lsaws.config.dig(@sdk, method2etype(m), "required_params")
       end
 
-      methods.map { |m| m.to_s.sub(/^(describe|list)_/, "") }.sort
+      methods.map { |m| method2etype(m) }.sort
     end
 
     def get_method_rdoc(method)

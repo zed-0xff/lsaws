@@ -53,9 +53,16 @@ module Lsaws
         edef["result_keys"] = 
           if r.respond_to?(type)
             [type]
+          elsif r.respond_to?(:next_token) || r.respond_to?(:next_marker)
+            data_members = r.members - [:next_token, :next_marker]
+            if data_members.size == 1
+              [data_members[0]]
+            else
+              # XXX what if there's more than one array?
+              [data_members.find { |key| r[key].is_a?(Array) }].compact
+            end
           else
-            # XXX what if there's more than one array?
-            [(r.members - [:next_token, :next_marker]).find { |key| r[key].is_a?(Array) }].compact
+            []
           end
       end
 
@@ -87,7 +94,7 @@ module Lsaws
 
       results ||= []
       $stderr.puts "[d] #{results.inspect}" if @options[:debug]
-      if results.any? && !results.first.respond_to?(:name)
+      if results.any? && !results.first.respond_to?(:name) && results.first.respond_to?(:tags)
         results.first.class.class_eval do
           def name
             tags.find { |tag| tag.key == "Name" }&.value
@@ -185,12 +192,23 @@ module Lsaws
       _list_array SDKParser.new(sdk).entity_types
     end
 
+    # elasticache:global_replication_groups has 'members' as a column, so cannot just use `rows.members`
+    # assuming row is always subclass of Struct here
+    def _get_cols(row)
+      if row.is_a?(Struct)
+        Struct.instance_method(:members).bind_call(row)
+      else
+        row.members
+      end
+    end
+
     def _tabulo_guess_max_cols(rows, _cols)
-      max_cols = rows[0].members.size
+      all_cols = _get_cols(rows[0])
+      max_cols = all_cols.size
       return max_cols if max_cols < 4 || !@options[:max_width]
 
       4.upto(max_cols) do |ncols|
-        tbl = Tabulo::Table.new(rows[0, 100], *rows[0].members[0, ncols])
+        tbl = Tabulo::Table.new(rows[0, 100], *all_cols[0, ncols])
         tbl.autosize_columns
         tbl_width = tbl.column_registry.values.map { |c| c.padded_width + 1 }.inject(:+) + 1
         return ncols - 1 if tbl_width >= @options[:max_width]
@@ -225,7 +243,7 @@ module Lsaws
           cols.each { |name, func| tbl.add_column(name, &func) }
         else
           max_cols = _tabulo_guess_max_cols(rows, cols)
-          rows[0].members[0, max_cols].each { |col| tbl.add_column(col) }
+          _get_cols(rows[0])[0,max_cols].each { |col| tbl.add_column(col) }
         end
         puts tbl.pack(max_table_width: @options[:max_width])
       when :json

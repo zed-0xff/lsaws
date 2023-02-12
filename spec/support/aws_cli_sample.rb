@@ -6,13 +6,25 @@ require "active_support/core_ext/string/inflections"
 
 module AwsCliSample
   class FullAwsStub < Aws::Stubbing::EmptyStub
+
+    # added keeping `visited` list between different nested classes, see emrcontainers:job_templates
+    def stub visited = []
+      if @rules
+        stub_ref(@rules, visited)
+      else
+        EmptyStructure.new
+      end
+    end
+
     # original implementation returns empty lists for ListShape members, but we want nonempty
     def stub_ref(ref, visited = [])
       super.tap do |r|
-        if ref.shape.is_a?(ListShape) && r == []
-          return [FullAwsStub.new(ref.shape.member).stub]
+        if r == [] && ref.shape.respond_to?(:member)
+          return [FullAwsStub.new(ref.shape.member).stub(visited)]
         elsif ref.shape.is_a?(MapShape) && r == {}
-          r[FullAwsStub.new(ref.shape.key).stub] = FullAwsStub.new(ref.shape.value).stub
+          k = FullAwsStub.new(ref.shape.key).stub(visited)
+          v = FullAwsStub.new(ref.shape.value).stub(visited)
+          r[k] = v
         end
       end
     end
@@ -25,8 +37,8 @@ module AwsCliSample
       if source
         return send("get_#{source}", sdk, method)
       end
-      get_rubydoc_example(sdk, method) || 
-        get_api_structure(sdk, method)
+      get_api_structure(sdk, method)
+      #get_rubydoc_example(sdk, method) || 
     end
 
     def get_live(sdk, method)
@@ -56,8 +68,12 @@ module AwsCliSample
         result = data
           .scan(/^    #   resp\.to_h outputs the following:(.+?^    #   \})$/m)[0][0]
           .gsub(/^    #/, "")
+          .gsub(/Time\.parse\("(\d{10}(?:\.\d{3})?)"\)/, 'Time.at(\1)') # devicefarm:* + many
+        $stderr.puts "[d] #{result}" if ENV['DEBUG'].to_i > 2
         result = eval(result) # XXX FIXME FIXME FIXME XXX
-        examples << Example.new(title, call, result) unless result.empty?
+        next if result.empty?
+        next if result.is_a?(Hash) && result.values.all?{ |x| x.respond_to?(:empty?) && x.empty? } # databasemigrationservice:certificates
+        examples << Example.new(title, call, result)
       end
 
       case examples.size

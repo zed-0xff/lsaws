@@ -68,7 +68,7 @@ module Lsaws
         required_params.any? || Lsaws.config.dig(@sdk, method2etype(m), "required_params")
       end
 
-      methods.map { |m| method2etype(m) }.sort
+      methods.map { |m| method2etype(m) }.uniq.sort
     end
 
     def get_method_rdoc(method)

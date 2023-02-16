@@ -15,6 +15,17 @@ module Lsaws
       @options[:max_width] = nil if @options[:max_width].to_i.zero?
     end
 
+    def _abort_with_list(sdk, type)
+      if type == "default"
+        warn "[!] no default entity type set for #{sdk.inspect} SDK"
+      else
+        warn "[!] #{sdk.inspect} SDK does not have #{type.inspect} entity type"
+      end
+      puts "Known entity types are:"
+      list_entity_types(sdk)
+      exit 1
+    end
+
     def _prepare_entities(sdk, type, &block)
       edef = Lsaws.config.dig(sdk, type)
       return _prepare_entities(sdk, edef, &block) if edef.is_a?(String) # redirect like 'default' -> 'instances'
@@ -34,16 +45,7 @@ module Lsaws
       client_class = edef["client_class"] || sdkp.client_class_name
       client = Kernel.const_get(client_class).new
       method_name = edef["method"] || sdkp.etype2method(type)
-      unless client.respond_to?(method_name)
-        if type == "default"
-          warn "[!] no default entity type set for #{sdk.inspect} SDK"
-        else
-          warn "[!] #{sdk.inspect} SDK does not have #{type.inspect} entity type"
-        end
-        puts "Known entity types are:"
-        list_entity_types(sdk)
-        exit 1
-      end
+      _abort_with_list(sdk, type) unless method_name
       warn "[d] #{method_name} #{params}" if @options[:debug]
       results = client.send(method_name, params)
 

@@ -29,6 +29,11 @@ module Lsaws
         OptionParser.new do |opt|
           opt.banner = "Usage: lsaws [options] <sdk> [entity_type]"
 
+          opt.on("-p", "--profile PROFILE", "AWS profile") do |o|
+            @options[:profile] = o
+            ENV['AWS_PROFILE'] = o
+          end
+
           opt.on("-o", "--output FMT", SUPPORTED_FORMATS, "Format: #{SUPPORTED_FORMATS.join("/")}") do |f|
             @options[:format] = f.to_sym
           end

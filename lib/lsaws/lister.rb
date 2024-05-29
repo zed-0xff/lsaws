@@ -41,9 +41,13 @@ module Lsaws
       end
       params[:max_results] = @options[:max_results] if @options[:max_results]
 
+      ctor_params = {}
+      ctor_params[:endpoint] = @options[:endpoint] if @options[:endpoint]
+
       sdkp = SDKParser.new(sdk)
       client_class = edef["client_class"] || sdkp.client_class_name
-      client = Kernel.const_get(client_class).new
+      client = Kernel.const_get(client_class).new(ctor_params)
+
       method_name = edef["method"] || sdkp.etype2method(type)
       _abort_with_list(sdk, type) unless method_name
       warn "[d] #{method_name} #{params}" if @options[:debug]

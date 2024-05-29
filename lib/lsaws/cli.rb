@@ -29,6 +29,14 @@ module Lsaws
         OptionParser.new do |opt|
           opt.banner = "Usage: lsaws [options] <sdk> [entity_type]"
 
+          opt.on("--endpoint ENDPOINT", "AWS endpoint") do |o|
+            @options[:endpoint] = o
+          end
+
+          opt.on("--endpoint-url ENDPOINT", "AWS endpoint (aws cli compatible option)") do |o|
+            @options[:endpoint] = o
+          end
+
           opt.on("-p", "--profile PROFILE", "AWS profile") do |o|
             @options[:profile] = o
             ENV['AWS_PROFILE'] = o

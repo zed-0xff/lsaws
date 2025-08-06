@@ -36,7 +36,7 @@ module Lsaws
       params = edef["default_params"] || {}
       if @options[:filters].any?
         params[:filters] = @options[:filters].map { |k, v| { name: k, values: [v] } }
-      elsif edef["default_filter"]
+      elsif edef["default_filter"] && !@options[:no_filters]
         params[:filters] = [edef["default_filter"]]
       end
       params[:max_results] = @options[:max_results] if @options[:max_results]

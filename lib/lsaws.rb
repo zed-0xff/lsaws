@@ -10,7 +10,16 @@ module Lsaws
   end
 
   def self.config
-    @config ||= YAML.load_file(File.join(Lsaws.root, "lsaws.yml"))
+    @config ||= 
+      begin
+        r = YAML.load_file(File.join(Lsaws.root, "lsaws.yml"))
+        user_config = File.join(Dir.home, ".lsaws.yml")
+        if File.exist?(user_config)
+          require "deep_merge"
+          r.deep_merge!(YAML.load_file(user_config))
+        end
+        r
+      end
   end
 end
 

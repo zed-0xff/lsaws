@@ -51,7 +51,10 @@ module Lsaws
             @options[:header] = false
           end
           opt.on("--tags", "Show tags") { @options[:show_tags] = true }
+
           opt.on("-f", "--filter K=V", "Add filter") { |o| @options[:filters].merge!(Hash[*o.split("=", 2)]) }
+          opt.on("--no-filters", "Skip default filters") { @options[:no_filters] = true }
+  
           opt.on("-C", "--columns C", "Show only specified column(s)") do |o|
             if o[","]
               @options[:show_cols].append(*o.split(","))
